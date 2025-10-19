@@ -9,9 +9,10 @@ from io import StringIO
 from pathlib import Path
 from shutil import rmtree
 from tempfile import TemporaryFile, mkdtemp
-from threading import Timer
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest import mock
+
+import pytest
 
 import scrapy
 from scrapy.cmdline import _pop_command_name, _print_unknown_command_msg
@@ -21,13 +22,18 @@ from scrapy.utils.python import to_unicode
 from scrapy.utils.reactor import _asyncio_reactor_path
 from scrapy.utils.test import get_testenv
 
-if TYPE_CHECKING:
-    import os
+
+class EmptyCommand(ScrapyCommand):
+    def short_desc(self) -> str:
+        return ""
+
+    def run(self, args: list[str], opts: argparse.Namespace) -> None:
+        pass
 
 
 class TestCommandSettings:
     def setup_method(self):
-        self.command = ScrapyCommand()
+        self.command = EmptyCommand()
         self.command.settings = Settings()
         self.parser = argparse.ArgumentParser(
             formatter_class=ScrapyHelpFormatter, conflict_handler="resolve"
@@ -92,24 +98,20 @@ class TestProjectBase:
             **popen_kwargs,
         )
 
-        def kill_proc():
+        try:
+            stdout, stderr = p.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
             p.kill()
             p.communicate()
-            raise AssertionError("Command took too much time to complete")
-
-        timer = Timer(15, kill_proc)
-        try:
-            timer.start()
-            stdout, stderr = p.communicate()
-        finally:
-            timer.cancel()
+            pytest.fail("Command took too much time to complete")
 
         return p, to_unicode(stdout), to_unicode(stderr)
 
-    def find_in_file(self, filename: str | os.PathLike, regex) -> re.Match | None:
+    @staticmethod
+    def find_in_file(filename: Path, regex: str) -> re.Match | None:
         """Find first pattern occurrence in file"""
         pattern = re.compile(regex)
-        with Path(filename).open("r", encoding="utf-8") as f:
+        with filename.open("r", encoding="utf-8") as f:
             for line in f:
                 match = pattern.search(line)
                 if match is not None:
@@ -129,30 +131,12 @@ class TestCommandCrawlerProcess(TestCommandBase):
     """Test that the command uses the expected kind of *CrawlerProcess
     and produces expected errors when needed."""
 
-    name = "crawltest"
-
-    NORMAL_MSG = "Type of self.crawler_process: <class 'scrapy.crawler.CrawlerProcess'>"
-    ASYNC_MSG = (
-        "Type of self.crawler_process: <class 'scrapy.crawler.AsyncCrawlerProcess'>"
-    )
+    name = "crawl"
+    NORMAL_MSG = "Using CrawlerProcess"
+    ASYNC_MSG = "Using AsyncCrawlerProcess"
 
     def setup_method(self):
         super().setup_method()
-        (self.cwd / self.project_name / "commands").mkdir(exist_ok=True)
-        (self.cwd / self.project_name / "commands" / "__init__.py").touch()
-        (self.cwd / self.project_name / "commands" / f"{self.name}.py").write_text("""
-from scrapy.commands.crawl import Command
-
-class CrawlerProcessCrawlCommand(Command):
-    requires_project = True
-
-    def run(self, args, opts):
-        print(f"Type of self.crawler_process: {type(self.crawler_process)}")
-        super().run(args, opts)
-""")
-
-        self._append_settings(f"COMMANDS_MODULE = '{self.project_name}.commands'\n")
-
         (self.cwd / self.project_name / "spiders" / "sp.py").write_text("""
 import scrapy
 
@@ -184,6 +168,8 @@ class MySpider(scrapy.Spider):
         yield
 """)
 
+        self._append_settings("LOG_LEVEL = 'DEBUG'\n")
+
     def _append_settings(self, text: str) -> None:
         """Add text to the end of the project settings.py."""
         with (self.cwd / self.project_name / "settings.py").open(
@@ -205,16 +191,16 @@ class MySpider(scrapy.Spider):
 
     def _assert_spider_works(self, msg: str, *args: str) -> None:
         """The command uses the expected *CrawlerProcess, the spider works."""
-        _, out, err = self.proc(self.name, *args)
-        assert msg in out, out
-        assert "It works!" in err, err
-        assert "Spider closed (finished)" in err, err
+        _, _, err = self.proc(self.name, *args)
+        assert msg in err
+        assert "It works!" in err
+        assert "Spider closed (finished)" in err
 
     def _assert_spider_asyncio_fail(self, msg: str, *args: str) -> None:
         """The command uses the expected *CrawlerProcess, the spider fails to use asyncio."""
-        _, out, err = self.proc(self.name, *args)
-        assert msg in out, out
-        assert "no running event loop" in err, err
+        _, _, err = self.proc(self.name, *args)
+        assert msg in err
+        assert "no running event loop" in err
 
     def test_project_settings(self):
         """The reactor is set via the project default settings (to the asyncio value).
@@ -314,13 +300,13 @@ class MySpider(scrapy.Spider):
                 spider,
                 "{'TWISTED_REACTOR': 'twisted.internet.selectreactor.SelectReactor'}",
             )
-            _, out, err = self.proc(self.name, spider)
-            assert self.ASYNC_MSG in out, out
+            _, _, err = self.proc(self.name, spider)
+            assert self.ASYNC_MSG in err
             assert (
                 "The installed reactor (twisted.internet.asyncioreactor.AsyncioSelectorReactor)"
                 " does not match the requested one"
                 " (twisted.internet.selectreactor.SelectReactor)"
-            ) in err, err
+            ) in err
 
     def test_project_asyncio_spider_settings_select_forced(self):
         """The reactor is set via the project settings to the asyncio value

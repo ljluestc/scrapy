@@ -17,9 +17,7 @@ from tests.test_commands import TestProjectBase
 
 class TestStartprojectCommand(TestProjectBase):
     def test_startproject(self):
-        p, out, err = self.proc("startproject", self.project_name)
-        print(out)
-        print(err, file=sys.stderr)
+        p, _, _ = self.proc("startproject", self.project_name)
         assert p.returncode == 0
 
         assert Path(self.proj_path, "scrapy.cfg").exists()
@@ -64,9 +62,7 @@ class TestStartprojectCommand(TestProjectBase):
         project_path = Path(project_dir, project_name)
         project_path.mkdir()
 
-        p, out, err = self.proc("startproject", project_name, cwd=project_dir)
-        print(out)
-        print(err, file=sys.stderr)
+        p, _, _ = self.proc("startproject", project_name, cwd=project_dir)
         assert p.returncode == 0
 
         assert Path(project_path, "scrapy.cfg").exists()
@@ -106,8 +102,6 @@ def get_permissions_dict(
 
 
 class TestStartprojectTemplates(TestProjectBase):
-    maxDiff = None
-
     def setup_method(self):
         super().setup_method()
         self.tmpl = str(Path(self.temp_path, "templates"))
@@ -153,6 +147,8 @@ class TestStartprojectTemplates(TestProjectBase):
                 project_name,
             ),
             cwd=destination,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=self.env,
         )
         process.wait()
@@ -206,6 +202,8 @@ class TestStartprojectTemplates(TestProjectBase):
                 f"TEMPLATES_DIR={read_only_templates_dir}",
             ),
             cwd=destination,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=self.env,
         )
         process.wait()
@@ -265,6 +263,8 @@ class TestStartprojectTemplates(TestProjectBase):
                 ".",
             ),
             cwd=project_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=self.env,
         )
         process.wait()
@@ -308,6 +308,8 @@ class TestStartprojectTemplates(TestProjectBase):
                     project_name,
                 ),
                 cwd=destination,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 env=self.env,
             )
             process.wait()

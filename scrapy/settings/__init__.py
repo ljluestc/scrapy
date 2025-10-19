@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
+import warnings
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from importlib import import_module
 from pprint import pformat
 from typing import TYPE_CHECKING, Any, Union, cast
 
+from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.settings import default_settings
 from scrapy.utils.misc import load_object
 
@@ -147,6 +149,15 @@ class BaseSettings(MutableMapping[_SettingsKeyT, Any]):
         :param default: the value to return if no setting is found
         :type default: object
         """
+        if name == "CONCURRENT_REQUESTS_PER_IP" and (
+            isinstance(self[name], int) and self[name] != 0
+        ):
+            warnings.warn(
+                "The CONCURRENT_REQUESTS_PER_IP setting is deprecated, use CONCURRENT_REQUESTS_PER_DOMAIN instead.",
+                ScrapyDeprecationWarning,
+                stacklevel=2,
+            )
+
         return self[name] if self[name] is not None else default
 
     def getbool(self, name: _SettingsKeyT, default: bool = False) -> bool:
@@ -282,13 +293,21 @@ class BaseSettings(MutableMapping[_SettingsKeyT, Any]):
         if isinstance(value, str):
             try:
                 value_loaded = json.loads(value)
-                assert isinstance(value_loaded, (dict, list))
+                if not isinstance(value_loaded, (dict, list)):
+                    raise ValueError(
+                        f"JSON string for setting '{name}' must evaluate to a dict or list, "
+                        f"got {type(value_loaded).__name__}: {value_loaded!r}"
+                    )
                 return value_loaded
             except ValueError:
                 return value.split(",")
         if isinstance(value, tuple):
             return list(value)
-        assert isinstance(value, (dict, list))
+        if not isinstance(value, (dict, list)):
+            raise ValueError(
+                f"Setting '{name}' must be a dict, list, tuple, or string, "
+                f"got {type(value).__name__}: {value!r}"
+            )
         return copy.deepcopy(value)
 
     def getwithbase(self, name: _SettingsKeyT) -> BaseSettings:
@@ -325,7 +344,7 @@ class BaseSettings(MutableMapping[_SettingsKeyT, Any]):
         stored.
         """
         if len(self) > 0:
-            return max(cast(int, self.getpriority(name)) for name in self)
+            return max(cast("int", self.getpriority(name)) for name in self)
         return get_settings_priority("default")
 
     def replace_in_component_priority_dict(
@@ -508,11 +527,11 @@ class BaseSettings(MutableMapping[_SettingsKeyT, Any]):
         """
         self._assert_mutability()
         if isinstance(values, str):
-            values = cast(dict[_SettingsKeyT, Any], json.loads(values))
+            values = cast("dict[_SettingsKeyT, Any]", json.loads(values))
         if values is not None:
             if isinstance(values, BaseSettings):
                 for name, value in values.items():
-                    self.set(name, value, cast(int, values.getpriority(name)))
+                    self.set(name, value, cast("int", values.getpriority(name)))
             else:
                 for name, value in values.items():
                     self.set(name, value, priority)
@@ -522,7 +541,7 @@ class BaseSettings(MutableMapping[_SettingsKeyT, Any]):
             raise KeyError(name)
         self._assert_mutability()
         priority = get_settings_priority(priority)
-        if priority >= cast(int, self.getpriority(name)):
+        if priority >= cast("int", self.getpriority(name)):
             del self.attributes[name]
 
     def __delitem__(self, name: _SettingsKeyT) -> None:
